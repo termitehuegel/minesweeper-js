@@ -1,310 +1,283 @@
 const canvas = document.getElementById('canvas');
 let ctx = canvas.getContext('2d');
-const size = 50;
-const padding = 5;
+const padding = 1;
 
+/**
+ *
+ * @param {string} cname
+ * @returns {string}
+ */
+function getCookie(cname) {
+    var name = cname + "=";
+    var decodedCookie = decodeURIComponent(document.cookie);
+    var ca = decodedCookie.split(';');
+    for(var i = 0; i <ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+}
 
-
-function  drawRect(x, y, color) {
+function drawRect(x, y, color) {
     ctx.beginPath();
-    ctx.rect((size+padding)*x, (size+padding)*y, size, size);
+    ctx.rect((game.size+padding)*x, (game.size+padding)*y, game.size, game.size);
     ctx.fillStyle = color;
     ctx.fill();
 }
 
-class Tile {
-    x;
-    y;
-    value;
-
-    constructor(x, y, value) {
-        this.x = x;
-        this.y = y;
-        this.value = value;
-    }
+function getMousePos(canvas, event) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+    };
+}
+//Function to check whether a point is inside a rectangle
+function isInside(pos, rect){
+    return pos.x > rect.x && pos.x < rect.x+rect.width && pos.y < rect.y+rect.height && pos.y > rect.y
 }
 
 class Game {
-    win = false;
-    score = 0;
-    tileColors = {2: '#eee', 4: '#ffbb98', 8: '#ffb38a', 16: '#fc7463', 32: '#ff543c', 64: '#ff3619', 128: '#fce475', 256: '#ffe45a', 512: '#ffe344', 1024: '#ffdf1c', 2048: '#000'}
+    isWin = false;
     isAlive = true;
-    tiles = [];
-    tableSize = 4;
+    tableSize;
+    bombCount;
+    field = [];
+    flagCount = 0;
+    tileCount;
+    uncoveredTileCount = 0;
+    score = 0;
+    hardness;
+    size;
+    timeStart;
+    flagImg;
 
-    constructor() {
-        this.generateCell();
-        this.generateCell();
+
+    constructor(hardness) {
+        this.hardness = hardness;
+        switch (hardness) {
+            case 0:
+                this.tableSize = 10;
+                this.bombCount = 10;
+                break;
+            case 1:
+                this.tableSize = 16;
+                this.bombCount = 40;
+                break;
+            case 2:
+                this.tableSize = 21;
+                this.bombCount = 99;
+                break;
+        }
+
+        this.size = Math.floor(600/(this.tableSize + padding));
+
+        this.flagImg = new Image(this.size, this.size);
+        this.flagImg.src = 'img/flag.png';
+
+        this.generateField();
+        this.tileCount = this.tableSize**2;
     }
 
+    generateField() {
+        for (let x = 0; x<this.tableSize; x++) {
+            this.field[x] = [];
+            for (let y = 0; y<this.tableSize; y++) {
+                this.field[x].push({value: 0, uncovered: false, flagged: false});
+            }
+        }
+        this.generateBombs(this.bombCount);
+        this.generateNumbers();
+    }
 
-    generateCell() {
-        let freePositions = this.getFreePositions();
-        if (freePositions.length === 0) {
-            this.isAlive = false;
+    generateNumbers() {
+        for (let x = 0; x<this.tableSize; x++) {
+            for (let y = 0; y<this.tableSize; y++) {
+                if (this.field[x][y].value != -1) {
+                    let value = 0;
+                    for (let xPos = -1; xPos < 2; xPos++) {
+                        for (let yPos = -1; yPos < 2; yPos++) {
+                            if (x + xPos >= 0 && y + yPos >= 0 && this.field[x + xPos] != null && this.field[x + xPos][y + yPos] != null) {
+                                if (this.field[x + xPos][y + yPos].value === -1) {
+                                    value++;
+                                }
+                            }
+                        }
+                    }
+                    this.field[x][y].value = value;
+                }
+            }
+        }
+    }
+
+    generateBombs(count) {
+        if (count <= 0) {
+            return;
+        }
+        let yPos = Math.floor(Math.random() * this.tableSize);
+        let xPos = Math.floor(Math.random() * this.tableSize);
+        if (this.field[xPos][yPos].value == 0) {
+            this.field[xPos][yPos].value = -1;
+            this.generateBombs(count - 1);
         } else {
-            let pos = Math.floor(Math.random() * freePositions.length);
-            let value = 2 ** Math.floor(Math.random() * 2 + 1);
-            pos = freePositions[pos];
-            this.tiles.push(new Tile(pos.x, pos.y, value));
+            this.generateBombs(count);
         }
     }
 
-    getFreePositions() {
-        let freePos = [];
-        for (let x = 0; x < this.tableSize; x++) {
-            for (let y = 0; y < this.tableSize; y++) {
-                let flag = true;
-                this.tiles.forEach(function (pos) {
-                    if (pos.x == x && pos.y == y) {
-                        flag = false;
-                    }
-                });
-                if (flag) {
-                    freePos.push({x: x, y: y});
-                }
+    uncoverTile(x, y) {
+        if (!this.field[x][y].uncovered && !this.field[x][y].flagged) {
+            if (this.uncoveredTileCount == 0) {
+                this.timeStart = Date.now();
             }
-        }
-        return freePos;
-    }
-
-    moveLeft() {
-        let yxOrderedList = [];
-        for (let y = 0; y<this.tableSize; y++) {
-            let xOrderedList = [];
-            for (let x = 0; x < this.tableSize; x++) {
-                for (let i = 0; i < this.tiles.length; i++) {
-                    if (this.tiles[i].x === x && this.tiles[i].y === y) {
-                        xOrderedList.push(this.tiles[i]);
-                        break;
-                    }
-                }
-            }
-            yxOrderedList.push(xOrderedList);
-        }
-        this.tiles = [];
-        for (let j = 0; j<yxOrderedList.length; j++) {
-            for (let i = 0; i<yxOrderedList[j].length; i++) {
-                if (yxOrderedList[j][i + 1] != null) {
-                    if (yxOrderedList[j][i].value === yxOrderedList[j][i + 1].value) {
-                        yxOrderedList[j][i].value = yxOrderedList[j][i].value * 2;
-                        this.score +=  yxOrderedList[j][i].value;
-                        if (yxOrderedList[j][i].value === 4096) {
-                            this.win = true;
-                            this.isAlive = false;
+            if (this.field[x][y].value == -1) {
+                this.die();
+            } else if (this.field[x][y].value > 0) {
+                this.field[x][y].uncovered = true;
+                this.uncoveredTileCount++;
+            } else {
+                this.field[x][y].uncovered = true;
+                this.uncoveredTileCount++;
+                for (let xPos = -1; xPos < 2; xPos++) {
+                    for (let yPos = -1; yPos < 2; yPos++) {
+                        if (x + xPos >= 0 && y + yPos >= 0 && this.field[x + xPos] != null && this.field[x + xPos][y + yPos] != null) {
+                            this.uncoverTile(parseInt([x + xPos]),parseInt([y + yPos]));
                         }
-                        yxOrderedList[j].splice(i + 1, 1);
                     }
                 }
-                yxOrderedList[j][i].x = i;
-                this.tiles.push(yxOrderedList[j][i]);
+            }
+            if (this.uncoveredTileCount == this.tileCount - this.bombCount) {
+                this.win();
             }
         }
-        this.generateCell();
     }
 
-
-    moveUp() {
-        let xyOrderedList = [];
-        for (let x = 0; x<this.tableSize; x++) {
-            let yOrderedList = [];
-            for (let y = 0; y < this.tableSize; y++) {
-                for (let i = 0; i < this.tiles.length; i++) {
-                    if (this.tiles[i].x === x && this.tiles[i].y === y) {
-                        yOrderedList.push(this.tiles[i]);
-                        break;
-                    }
-                }
-            }
-            xyOrderedList.push(yOrderedList);
-        }
-        this.tiles = [];
-        for (let j = 0; j<xyOrderedList.length; j++) {
-            for (let i = 0; i<xyOrderedList[j].length; i++) {
-                if (xyOrderedList[j][i + 1] != null) {
-                    if (xyOrderedList[j][i].value === xyOrderedList[j][i + 1].value) {
-                        xyOrderedList[j][i].value = xyOrderedList[j][i].value * 2;
-                        this.score +=  xyOrderedList[j][i].value;
-                        if (xyOrderedList[j][i].value === 4096) {
-                            this.win = true;
-                            this.isAlive = false;
-                        }
-                        xyOrderedList[j].splice(i + 1, 1);
-                    }
-                }
-                xyOrderedList[j][i].y = i;
-                this.tiles.push(xyOrderedList[j][i]);
+    flag(x, y) {
+        if (this.field[x][y].uncovered == false) {
+            if (this.field[x][y].flagged) {
+                this.field[x][y].flagged = false;
+                this.flagCount--;
+            } else if (this.flagCount < this.bombCount) {
+                    this.field[x][y].flagged = true;
+                    this.flagCount++;
             }
         }
-        this.generateCell();
+    }
+    win() {
+        this.score = Math.floor((Date.now() - this.timeStart)/1000);
+        this.isWin = true;
     }
 
-    moveRight() {
-        let yxOrderedList = [];
-        for (let y = 0; y<this.tableSize; y++) {
-            let xOrderedList = [];
-            for (let x = 0; x < this.tableSize; x++) {
-                for (let i = 0; i < this.tiles.length; i++) {
-                    if (this.tiles[i].x === x && this.tiles[i].y === y) {
-                        xOrderedList.push(this.tiles[i]);
-                        break;
-                    }
-                }
-            }
-            xOrderedList.reverse();
-            yxOrderedList.push(xOrderedList);
-        }
-        this.tiles = [];
-        for (let j = 0; j<yxOrderedList.length; j++) {
-            for (let i = 0; i<yxOrderedList[j].length; i++) {
-                if (yxOrderedList[j][i + 1] != null) {
-                    if (yxOrderedList[j][i].value === yxOrderedList[j][i + 1].value) {
-                        yxOrderedList[j][i].value = yxOrderedList[j][i].value * 2;
-                        this.score +=  yxOrderedList[j][i].value;
-                        if (yxOrderedList[j][i].value === 4096) {
-                            this.win = true;
-                            this.isAlive = false;
-                        }
-                        yxOrderedList[j].splice(i + 1, 1);
-                    }
-                }
-                yxOrderedList[j][i].x = this.tableSize - 1 - i;
-                this.tiles.push(yxOrderedList[j][i]);
-            }
-        }
-        this.generateCell();
-    }
-
-    moveDown() {
-        let xyOrderedList = [];
-        for (let x = 0; x<this.tableSize; x++) {
-            let yOrderedList = [];
-            for (let y = 0; y < this.tableSize; y++) {
-                for (let i = 0; i < this.tiles.length; i++) {
-                    if (this.tiles[i].x === x && this.tiles[i].y === y) {
-                        yOrderedList.push(this.tiles[i]);
-                        break;
-                    }
-                }
-            }
-            yOrderedList.reverse();
-            xyOrderedList.push(yOrderedList);
-        }
-        this.tiles = [];
-        for (let j = 0; j<xyOrderedList.length; j++) {
-            for (let i = 0; i<xyOrderedList[j].length; i++) {
-                if (xyOrderedList[j][i + 1] != null) {
-                    if (xyOrderedList[j][i].value === xyOrderedList[j][i + 1].value) {
-                        xyOrderedList[j][i].value = xyOrderedList[j][i].value * 2;
-                        this.score +=  xyOrderedList[j][i].value;
-                        if (xyOrderedList[j][i].value === 4096) {
-                            this.win = true;
-                            this.isAlive = false;
-                        }
-                        xyOrderedList[j].splice(i + 1, 1);
-                    }
-                }
-                xyOrderedList[j][i].y = this.tableSize - 1 -i;
-                this.tiles.push(xyOrderedList[j][i]);
-            }
-        }
-        this.generateCell();
-    }
+   die() {
+       this.isAlive = false;
+   }
 }
-
-let game = new Game();
+let game = new Game(1);
 
 setInterval(function () {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (game.isAlive) {
+    if (game.isAlive && !game.isWin) {
         ctx.beginPath();
-        ctx.rect(0, 0, 220, canvas.height);
-        ctx.fillStyle = '#aaa';
+        ctx.rect(0, 0, Math.floor((game.size+1)*game.tableSize), Math.floor((game.size+1)*game.tableSize));
+        ctx.fillStyle = '#666';
         ctx.fill();
-        for (let x = 0; x < game.tableSize; x++) {
-            for (let y = 0; y < game.tableSize; y++) {
-                drawRect(x, y, '#ccc');
-            }
-        }
-        game.tiles.forEach(function (tile) {
-            drawRect(tile.x, tile.y, game.tileColors[tile.value]);
-            ctx.font = "20px Arial";
-            if (tile.value !== 2048) {
-                ctx.fillStyle = '#000';
-            } else {
-                ctx.fillStyle = '#FFF';
-            }
-            let xDifference = 20;
 
-            switch (true) {
-                case tile.value > 1000:
-                    xDifference = 5;
-                    break;
-                case tile.value > 100:
-                    xDifference = 10;
-                    break;
-                case tile.value > 10:
-                    xDifference = 15;
-                    break;
+        let coordinatesAdd = {};
+
+        switch (game.hardness) {
+            case 0:
+                coordinatesAdd = {x: + 17.5, y: 40};
+                ctx.font = "30px Arial";
+                break;
+            case 1:
+                coordinatesAdd = {x: 10, y: 25};
+                ctx.font = "20px Arial";
+                break;
+            case 2:
+                coordinatesAdd = {x: + 9, y: 20};
+                ctx.font = "15px Arial";
+                break;
+        }
+        for (let x = 0; x<game.field.length; x++) {
+            for (let y = 0; y<game.field.length; y++) {
+                if (game.field[x][y].uncovered) {
+                    drawRect(x, y, '#ddd');
+                    if (game.field[x][y].value > 0) {
+                        ctx.fillStyle = '#000';
+                        ctx.fillText(game.field[x][y].value, x*(game.size+padding) + coordinatesAdd.x, y*(game.size+padding) + coordinatesAdd.y);
+                    }
+                } else if (game.field[x][y].flagged) {
+                    drawRect(x, y, '#aaa');
+                    ctx.drawImage(game.flagImg, x*(game.size+padding), y*(game.size+padding), game.flagImg.width, game.flagImg.height);
+                } else {
+                    drawRect(x, y, '#aaa');
+                }
             }
-            ctx.fillText(tile.value, tile.x*(size+padding) + xDifference, tile.y*(size+padding) + 35);
-        });
-        ctx.font = "20px Arial";
-        ctx.fillStyle = '#000';
-        ctx.fillText("Score: " + game.score, 230, 35);
+        }
     } else {
-        if (document.cookie == "") {
-            document.cookie = game.score.toString();
+        if (getCookie(game.hardness.toString()) === "" || getCookie(game.hardness.toString()) === "0") {
+            document.cookie = game.hardness.toString() + '=' + game.score.toString();
         }
-        if (parseInt(document.cookie) < game.score) {
-            document.cookie = game.score.toString();
+        if (parseInt(getCookie(game.hardness.toString())) > game.score && game.score > 0) {
+            document.cookie = game.hardness.toString() + '=' + game.score.toString();
         }
-        ctx.font = "10px Arial";
-        if (game.win) {
+        ctx.font = "20px Arial";
+        if (game.isWin) {
             ctx.fillStyle = '#0c0';
-            ctx.fillText("YOU WON", canvas.width / 4 + 35, canvas.height / 2);
+            ctx.fillText("YOU WON", canvas.width / 4 + 75, canvas.height *  7/18);
         } else {
             ctx.fillStyle = '#c00';
-            ctx.fillText("YOU DIED", canvas.width / 4 + 35, canvas.height / 2);
+            ctx.fillText("YOU LOST", canvas.width / 4 + 72.5, canvas.height *  7/18);
         }
+
         ctx.fillStyle = '#ccc';
-        ctx.fillText("PRESS ANY BUTTON TO RETRY", canvas.width/4, canvas.height*2/3);
+        ctx.fillText("Easy", canvas.width/4, canvas.height*2/3);
+        ctx.fillText("Medium", canvas.width/4, canvas.height*2/3 + 24 );
+        ctx.fillText("Hard", canvas.width/4, canvas.height*2/3 + 48);
         ctx.fillStyle = '#000';
-        ctx.fillText("Score: " + game.score, canvas.width/4, canvas.height/4 + 12);
-        ctx.fillText("Highscore: " + document.cookie, canvas.width/4, canvas.height/4);
+        ctx.fillText("Score: " + game.score + 's', canvas.width/4, canvas.height/4 + 24);
+        ctx.fillText("Highscore: " + getCookie(game.hardness.toString()) + 's', canvas.width/4, canvas.height/4);
+
     }
 }, 50);
 
+canvas.addEventListener('click', function(evt) {
 
-window.onkeydown = function (event) {
-    if (game.isAlive) {
-        switch (event.keyCode) {
-            case 37:
-                game.moveLeft();
-                break;
-            case 65:
-                game.moveLeft();
-                break;
-            case 38:
-                game.moveUp();
-                break;
-            case 87:
-                game.moveUp();
-                break;
-            case 39:
-                game.moveRight();
-                break;
-            case 68:
-                game.moveRight();
-                break;
-            case 83:
-                game.moveDown();
-                break;
-            case 40:
-                game.moveDown();
-                break;
+    const mousePos = getMousePos(canvas, evt);
+
+
+    if (game.isAlive && !game.isWin) {
+        for (let x = 0; x < game.tableSize; x++) {
+            for (let y = 0; y < game.tableSize; y++) {
+                if (isInside(mousePos, {x: x*(game.size+padding), y: y*(game.size+padding), width: game.size, height: game.size})) {
+                    game.uncoverTile(x, y);
+                }
+            }
         }
     } else {
-        game = new Game();
+        for (let hardness = 0; hardness <= 2; hardness++) {
+            if (isInside(mousePos, {x: canvas.width/4, y: canvas.height*2/3 - 20 + 24*hardness, width: 100, height: 20})) {
+                game = new Game(hardness);
+            }
+        }
     }
-}
+}, false);
+
+canvas.addEventListener('contextmenu', function(evt) {
+
+    if (game.isAlive && !game.isWin) {
+        const mousePos = getMousePos(canvas, evt);
+        for (let x = 0; x < game.tableSize; x++) {
+            for (let y = 0; y < game.tableSize; y++) {
+                if (isInside(mousePos, {x: x*(game.size+padding), y: y*(game.size+padding), width: game.size, height: game.size})) {
+                    game.flag(x, y);
+                }
+            }
+        }
+    }
+    return false;
+}, false);
